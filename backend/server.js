@@ -84,6 +84,8 @@ const allowedOrigins = (process.env.FRONTEND_URL ||
 
 const MAIN_DOMAIN = (process.env.MAIN_DOMAIN || "").toLowerCase();
 
+console.log('Origines',process.env.FRONTEND_URL);
+
 // Cache verified custom domains so we don't hit Mongo on every preflight.
 // Refreshed every 60s — short enough that a newly-verified domain works fast.
 import Company from "./src/models/Company.js";

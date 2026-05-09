@@ -75,7 +75,9 @@ const httpServer = createServer(app); // for socket.io
 app.use(helmet());
 
 // Allow multiple frontend origins (dev + production)
-const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
+const allowedOrigins = (process.env.FRONTEND_URL ||
+  "https://attendease-6v4v.onrender.com",
+"http://localhost:5173")
   .split(",")
   .map((url) => url.trim())
   .filter(Boolean);
@@ -113,7 +115,10 @@ const isAllowedOrigin = (origin) => {
   }
 
   // Any subdomain of our main domain (Scenario B)
-  if (MAIN_DOMAIN && (host === MAIN_DOMAIN || host.endsWith(`.${MAIN_DOMAIN}`))) {
+  if (
+    MAIN_DOMAIN &&
+    (host === MAIN_DOMAIN || host.endsWith(`.${MAIN_DOMAIN}`))
+  ) {
     return true;
   }
 
@@ -133,13 +138,17 @@ app.use(
         refreshCustomDomains().then(() => {
           if (isAllowedOrigin(origin)) return callback(null, true);
           console.warn(`[CORS] Blocked origin: ${origin}`);
-          return callback(new Error("Not allowed by CORS"), false);
+          // IMPORTANT: pass `false` instead of an Error. An Error makes
+          // the cors middleware throw, which Express turns into a 500.
+          // Returning `false` skips the CORS headers — the browser blocks
+          // naturally and we return 200/204 cleanly.
+          return callback(null, false);
         });
         return;
       }
 
       console.warn(`[CORS] Blocked origin: ${origin}`);
-      return callback(new Error("Not allowed by CORS"), false);
+      return callback(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
@@ -268,4 +277,3 @@ process.on("unhandledRejection", (err) => {
   console.error("❌ Unhandled Rejection:", err.message);
   httpServer.close(() => process.exit(1));
 });
-

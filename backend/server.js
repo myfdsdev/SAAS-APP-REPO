@@ -51,8 +51,9 @@ import "./src/config/email.js";
 import { initSocket } from "./src/sockets/index.js";
 import { errorHandler, notFound } from "./src/middleware/errorHandler.js";
 
-// Connect to MongoDB
-connectDB();
+// Connect to MongoDB BEFORE we start listening, so the success/error log
+// appears in a clean order (before the "Server: development mode" banner).
+// connectDB() is awaited just below where we call httpServer.listen.
 
 // Init cron jobs (only in production or if explicitly enabled)
 if (
@@ -242,16 +243,25 @@ initSocket(httpServer);
 // ==========================================
 const PORT = process.env.PORT || 5000;
 
-httpServer.listen(PORT, () => {
-  console.log("=".repeat(50));
-  console.log(`🚀 Server: ${process.env.NODE_ENV || "development"} mode`);
-  console.log(`📍 Local:    http://localhost:${PORT}`);
-  console.log(`💚 Health:   http://localhost:${PORT}/api/health`);
-  console.log(`🔌 Socket:   ws://localhost:${PORT}`);
-  console.log("=".repeat(50));
+// Boot order: DB first (so we know the data layer is good), THEN start listening.
+// If the DB fails, connectDB() exits the process — we never reach `listen()`.
+const startServer = async () => {
+  await connectDB();
+  httpServer.listen(PORT, () => {
+    console.log("=".repeat(50));
+    console.log(`🚀 Server: ${process.env.NODE_ENV || "development"} mode`);
+    console.log(`📍 Local:    http://localhost:${PORT}`);
+    console.log(`💚 Health:   http://localhost:${PORT}/api/health`);
+    console.log(`🔌 Socket:   ws://localhost:${PORT}`);
+    console.log("=".repeat(50));
+    // Tab-heartbeat-based auto-checkout
+    startAutoCheckoutCron();
+  });
+};
 
-  // Tab-heartbeat-based auto-checkout
-  startAutoCheckoutCron();
+startServer().catch((err) => {
+  console.error("❌ Failed to start server:", err.message);
+  process.exit(1);
 });
 
 process.on("unhandledRejection", (err) => {

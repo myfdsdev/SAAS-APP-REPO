@@ -562,7 +562,7 @@ export default function MyProfile() {
                         <Button
                           type="submit"
                           disabled={updateProfileMutation.isPending || !isDirty}
-                          className="flex-1 bg-lime-400 hover:bg-lime-400"
+                          className="flex-1 bg-lime-400 hover:bg-lime-400 text-black"
                         >
                           <Save className="w-4 h-4 mr-2" />
                           {updateProfileMutation.isPending ? 'Saving...' : 'Save Changes'}

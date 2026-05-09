@@ -539,6 +539,32 @@ const companies = {
     const res = await api.post("/companies/join", data);
     return res.data;
   },
+  leave: async () => {
+    const res = await api.post("/companies/leave", {});
+    return res.data;
+  },
+  workspaces: async () => {
+    const res = await api.get("/companies/workspaces");
+    return res.data;
+  },
+  switch: async (companyId) => {
+    const res = await api.post(`/companies/switch/${companyId}`, {});
+    return res.data;
+  },
+  setDefault: async (companyId) => {
+    const res = await api.post(`/companies/default/${companyId}`, {});
+    return res.data;
+  },
+  leaveById: async (companyId) => {
+    const res = await api.post(`/companies/leave/${companyId}`, {});
+    return res.data;
+  },
+  deleteWorkspace: async (companyId, confirmName) => {
+    const res = await api.delete(`/companies/${companyId}`, {
+      data: { confirm_name: confirmName },
+    });
+    return res.data;
+  },
   my: async () => {
     const res = await api.get("/companies/my");
     return normalizeItem(res.data);
@@ -570,6 +596,31 @@ const companies = {
       });
       return normalizeItem(res.data);
     },
+  },
+};
+
+// ========== DOMAINS (subdomain + custom domain) ==========
+const domains = {
+  // Public — used on app load to discover the tenant from the Host header.
+  info: async () => {
+    const res = await api.get("/domains/info");
+    return res.data;
+  },
+  updateSubdomain: async (subdomain) => {
+    const res = await api.put("/domains/subdomain", { subdomain });
+    return res.data;
+  },
+  addCustomDomain: async (domain) => {
+    const res = await api.post("/domains/custom-domain", { domain });
+    return res.data;
+  },
+  verifyCustomDomain: async () => {
+    const res = await api.post("/domains/custom-domain/verify", {});
+    return res.data;
+  },
+  removeCustomDomain: async () => {
+    const res = await api.delete("/domains/custom-domain");
+    return res.data;
   },
 };
 
@@ -649,6 +700,7 @@ export const base44 = {
   feedback,
   salary,
   companies,
+  domains,
   superAdmin,
   api,
   appSettings: {

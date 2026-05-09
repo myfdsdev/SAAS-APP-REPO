@@ -39,6 +39,40 @@ const companySchema = new mongoose.Schema(
       maxlength: 6,
     },
     employee_counter: { type: Number, default: 0 },
+
+    // Subdomain (Scenario B) — free, auto-generated from company name.
+    // Falls back to required:false during the migration window so existing
+    // documents without a subdomain don't fail to load; backfill script
+    // populates it post-deploy.
+    subdomain: {
+      type: String,
+      unique: true,
+      sparse: true,
+      lowercase: true,
+      trim: true,
+      match: /^[a-z0-9-]+$/,
+      minlength: 3,
+      maxlength: 30,
+    },
+
+    // Custom domain (Scenario C) — premium, customer-supplied.
+    custom_domain: {
+      type: String,
+      unique: true,
+      sparse: true,
+      lowercase: true,
+      trim: true,
+    },
+    custom_domain_verified: { type: Boolean, default: false },
+    custom_domain_verification_token: { type: String, default: null },
+    custom_domain_added_at: { type: Date, default: null },
+    custom_domain_verified_at: { type: Date, default: null },
+    ssl_status: {
+      type: String,
+      enum: ["none", "pending", "active", "failed"],
+      default: "none",
+    },
+
     plan: { type: String, default: "free" },
     max_employees: { type: Number, default: 100 },
     is_active: { type: Boolean, default: true },
@@ -101,6 +135,27 @@ companySchema.statics.generateInviteCode = function () {
     code += alphabet[Math.floor(Math.random() * alphabet.length)];
   }
   return code;
+};
+
+// Auto-generate a unique subdomain from a company name.
+// Mirrors generateInviteCode's "static helper" pattern.
+companySchema.statics.generateSubdomain = async function (name = "") {
+  let base = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 30);
+
+  if (base.length < 3) base = `${base || "co"}-co`.slice(0, 30);
+
+  let candidate = base;
+  let counter = 1;
+  while (await this.findOne({ subdomain: candidate })) {
+    const suffix = `-${counter}`;
+    candidate = `${base.slice(0, 30 - suffix.length)}${suffix}`;
+    counter += 1;
+  }
+  return candidate;
 };
 
 companySchema.statics.generatePrefix = function (name = "") {

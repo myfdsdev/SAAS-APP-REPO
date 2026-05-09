@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
+import {
+  subscribeToEntity,
+  emitTyping,
+  emitStopTyping,
+} from '@/api/socketClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import DirectMessagesList from '../components/messages/DirectMessagesList';
 import BroadcastMessageDialog from '../components/messages/BroadcastMessageDialog';
@@ -143,8 +148,17 @@ export default function DirectMessages() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(true);
   const [editingMessage, setEditingMessage] = useState(null);
 
+  // Map of userId -> timestamp when they last sent a typing event. Anything
+  // newer than ~3s = currently typing. We render `Sara is typing...` based on
+  // this map for the currently-selected conversation partner.
+  const [typingMap, setTypingMap] = useState({});
+
   const messagesEndRef = useRef(null);
   const queryClient = useQueryClient();
+  // Throttle our outgoing typing events: at most one every 2s while user types,
+  // plus a stop_typing emit ~3s after the last keystroke.
+  const lastTypingEmitRef = useRef(0);
+  const stopTypingTimerRef = useRef(null);
 
   const toggleStar = (userId) => {
     setStarredConversations((prev) => {
@@ -241,6 +255,56 @@ export default function DirectMessages() {
   useEffect(() => {
     setEditingMessage(null);
   }, [selectedGroup, selectedUser?.id]);
+
+  // Subscribe to typing events for any conversation partner. We mark the
+  // sender as typing in `typingMap` when we get a `typing` event, and clear
+  // it on `stop_typing` or after a 3s safety timeout (in case the stop event
+  // is dropped).
+  useEffect(() => {
+    if (!user) return;
+    let safetyTimers = {};
+    const unsub = base44.entities.User?.subscribe?.(() => {}); // no-op fallback
+
+    // The socket layer routes typing events through the special `_typing`
+    // entity stream we wired up earlier — subscribe to it here.
+    const handler = (evt) => {
+      if (!evt?.data) return;
+      const senderId = String(evt.data.sender_id || evt.data.user_id || "");
+      if (!senderId) return;
+      if (evt.type === "typing") {
+        setTypingMap((m) => ({ ...m, [senderId]: Date.now() }));
+        clearTimeout(safetyTimers[senderId]);
+        safetyTimers[senderId] = setTimeout(() => {
+          setTypingMap((m) => {
+            const next = { ...m };
+            delete next[senderId];
+            return next;
+          });
+        }, 4000);
+      } else if (evt.type === "stop_typing") {
+        clearTimeout(safetyTimers[senderId]);
+        setTypingMap((m) => {
+          const next = { ...m };
+          delete next[senderId];
+          return next;
+        });
+      }
+    };
+
+    // The socketClient routes user_typing/user_stop_typing into the
+    // `_typing` subscriber bus, regardless of whether it's a registered entity.
+    const typingUnsub = subscribeToEntity('_typing', handler);
+
+    return () => {
+      Object.values(safetyTimers).forEach(clearTimeout);
+      typingUnsub?.();
+      unsub?.();
+    };
+  }, [user]);
+
+  const partnerId = selectedUser?.id || selectedUser?._id;
+  const partnerIsTyping =
+    partnerId && typingMap[String(partnerId)] !== undefined;
 
   useEffect(() => {
     if (!user) return;
@@ -478,82 +542,92 @@ export default function DirectMessages() {
   }
 
   return (
-    <div className="min-h-screen bg-black overflow-hidden">
-      <div className="max-w-[1600px] mx-auto h-screen flex flex-col px-3 md:px-4 lg:px-6 py-3 md:py-4 gap-4">
+    <div className="h-screen bg-black overflow-hidden">
+      <div className="h-full flex flex-col">
 
         <Banner message={pageError || messagesError?.message} />
 
-        {/* Top Bar */}
-        <div className="rounded-[1.75rem] border border-lime-400/15 bg-[#020806]/90 px-4 md:px-5 py-4 shadow-[0_14px_40px_rgba(0,0,0,0.18)]">
-          <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex items-center gap-3 mb-2 min-w-0">
-                <div className="w-11 h-11 rounded-2xl bg-lime-400/10 border border-lime-400/20 flex items-center justify-center shrink-0">
-                  <MessagesSquare className="w-5 h-5 text-lime-300" />
-                </div>
-                <div className="min-w-0">
-                  <h1 className="text-2xl md:text-3xl font-semibold text-white tracking-tight break-words">
-                    Communication Hub
-                  </h1>
-                  <p className="text-sm text-lime-100/55 break-words">
-                    Slack-style team messaging for direct and group communication
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <InfoPill icon={Bell} label="Starred" value={String(starredConversations.length)} tone="amber" />
-                <InfoPill icon={Users} label="Mode" value={selectedGroup ? "Group Chat" : selectedUser ? "Direct Message" : "No Chat Selected"} tone="slate" />
-              </div>
+        {/* Slim top bar */}
+        <header className="flex items-center justify-between gap-3 border-b border-lime-400/15 bg-[#020806] px-4 py-3 md:px-5">
+          <div className="flex items-center gap-3 min-w-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="lg:hidden h-9 w-9 shrink-0 rounded-lg text-lime-100/60 hover:text-white hover:bg-lime-400/10"
+              onClick={() => setMobileSidebarOpen((v) => !v)}
+              aria-label="Toggle conversations"
+            >
+              <MessagesSquare className="w-4 h-4" />
+            </Button>
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-lime-400/10 border border-lime-400/20">
+              <MessagesSquare className="h-4 w-4 text-lime-300" />
             </div>
-
-            <div className="flex items-center gap-3 flex-wrap">
-              <NotificationBell userEmail={user.email} />
-              {user.role === 'admin' && (
-                <Button
-                  onClick={() => setShowBroadcast(true)}
-                  className="h-11 bg-lime-400 hover:bg-lime-400 rounded-2xl text-black"
-                >
-                  <Megaphone className="w-4 h-4 mr-2" />
-                  Broadcast
-                </Button>
-              )}
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold text-white truncate">Messages</h1>
+              <p className="hidden sm:block text-xs text-lime-100/45 truncate">
+                {selectedGroup
+                  ? `Group · ${selectedGroup.name || ''}`
+                  : selectedUser
+                    ? `Direct · ${selectedUser.full_name || ''}`
+                    : 'Pick a conversation to start'}
+              </p>
             </div>
           </div>
-        </div>
 
-        {/* Main Workspace */}
-        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[340px_minmax(0,1fr)] gap-4">
-          {/* Sidebar */}
+          <div className="flex items-center gap-2 shrink-0">
+            {starredConversations.length > 0 && (
+              <span className="hidden sm:inline-flex items-center gap-1 rounded-full border border-amber-400/25 bg-amber-400/10 px-2.5 py-1 text-[11px] font-medium text-amber-200">
+                <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                {starredConversations.length}
+              </span>
+            )}
+            <NotificationBell userEmail={user.email} />
+            {user.role === 'admin' && (
+              <Button
+                onClick={() => setShowBroadcast(true)}
+                size="sm"
+                className="h-9 bg-lime-400 hover:bg-lime-300 rounded-lg text-black text-xs sm:text-sm"
+              >
+                <Megaphone className="w-4 h-4 sm:mr-2" />
+                <span className="hidden sm:inline">Broadcast</span>
+              </Button>
+            )}
+          </div>
+        </header>
+
+        {/* Main workspace — flush, no nested cards */}
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+          {/* Sidebar — full-height, slim border */}
           <div className={cn(
-            "min-h-0 rounded-[1.75rem] border border-lime-400/15 bg-[#020806]/90 shadow-[0_14px_40px_rgba(0,0,0,0.18)] overflow-hidden",
-            mobileSidebarOpen ? "block" : "hidden lg:block"
+            "min-h-0 w-full lg:w-[320px] xl:w-[340px] shrink-0 border-r border-lime-400/15 bg-[#020806] overflow-hidden",
+            mobileSidebarOpen ? "flex flex-col" : "hidden lg:flex lg:flex-col"
           )}>
             <div className="h-full flex flex-col min-h-0">
-              <div className="p-4 border-b border-lime-400/15 space-y-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-lime-100/55">
-                      Conversations
-                    </h2>
-                    <p className="text-xs text-lime-100/45 mt-1">Browse direct messages and groups</p>
-                  </div>
-                </div>
-
+              <div className="p-3 border-b border-lime-400/15">
                 <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-lime-100/45" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-lime-100/40" />
                   <input
                     value={sidebarSearch}
                     onChange={(e) => setSidebarSearch(e.target.value)}
-                    placeholder="Search people or groups..."
-                    className="w-full h-11 rounded-2xl border border-lime-400/15 bg-[#000000] pl-10 pr-4 text-sm text-white placeholder:text-lime-100/45 outline-none focus:border-lime-400/40"
+                    placeholder="Search conversations…"
+                    className="w-full h-9 rounded-lg border border-lime-400/15 bg-black pl-9 pr-3 text-sm text-white placeholder:text-lime-100/40 outline-none focus:border-lime-400/40"
                   />
+                  {sidebarSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setSidebarSearch("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-lime-100/40 hover:text-lime-200"
+                      aria-label="Clear search"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
-                <div className="space-y-2">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-lime-100/45 px-1">Group Chats</p>
+              <div className="flex-1 min-h-0 overflow-y-auto px-2 py-3 space-y-4">
+                <div>
+                  <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-lime-100/40">Groups</p>
                   <GroupChatList
                     currentUser={user}
                     searchQuery={sidebarSearch}
@@ -565,8 +639,8 @@ export default function DirectMessages() {
                   />
                 </div>
 
-                <div className="space-y-2">
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-lime-100/45 px-1">Direct Messages</p>
+                <div>
+                  <p className="px-2 mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-lime-100/40">Direct messages</p>
                   <DirectMessagesList
                     currentUser={user}
                     searchQuery={sidebarSearch}
@@ -584,10 +658,13 @@ export default function DirectMessages() {
             </div>
           </div>
 
-          {/* Chat Panel */}
-          <div className="min-h-0">
+          {/* Chat panel — flush with sidebar, no nested rounded chrome */}
+          <div className={cn(
+            "flex-1 min-h-0 min-w-0 flex flex-col bg-[#020806]",
+            mobileSidebarOpen && "hidden lg:flex"
+          )}>
             {selectedGroup ? (
-              <div className="h-full min-h-0 rounded-[1.75rem] border border-lime-400/15 bg-[#020806]/90 shadow-[0_14px_40px_rgba(0,0,0,0.18)] overflow-hidden">
+              <div className="h-full min-h-0 overflow-hidden">
                 <GroupChatInterface
                   group={selectedGroup}
                   currentUser={user}
@@ -595,9 +672,9 @@ export default function DirectMessages() {
                 />
               </div>
             ) : selectedUser ? (
-              <Card className="border border-lime-400/15 bg-[#020806]/90 h-full min-h-0 flex flex-col rounded-[1.75rem] shadow-[0_14px_40px_rgba(0,0,0,0.18)] overflow-hidden">
+              <div className="h-full min-h-0 flex flex-col">
                 {/* Chat Header */}
-                <div className="p-4 border-b border-lime-400/15 bg-[#020806]/90/95">
+                <div className="px-4 py-3 border-b border-lime-400/15 bg-[#020806]">
                   <div className="flex items-center gap-3">
                     <Button
                       variant="ghost"
@@ -609,15 +686,15 @@ export default function DirectMessages() {
                     </Button>
 
                     <div className="relative">
-                      <div className="w-12 h-12 bg-lime-400/10 border border-lime-400/20 rounded-2xl flex items-center justify-center">
-                        <span className="text-lime-300 font-semibold text-sm">
+                      <div className="w-10 h-10 bg-lime-400/10 border border-lime-400/20 rounded-xl flex items-center justify-center">
+                        <span className="text-lime-300 font-semibold text-xs">
                           {selectedUserInitials}
                         </span>
                       </div>
                       <div
                         className={cn(
-                          "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-900",
-                          selectedUser.is_online ? 'bg-emerald-500' : 'bg-black0'
+                          "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#020806]",
+                          selectedUser.is_online ? 'bg-emerald-500' : 'bg-zinc-600'
                         )}
                       />
                     </div>
@@ -637,8 +714,25 @@ export default function DirectMessages() {
                         )}
                       </div>
 
-                      <p className="text-sm text-lime-100/55">
-                        {selectedUser.is_online ? 'Online now' : 'Offline'}
+                      <p className="text-sm text-lime-100/55 flex items-center gap-2">
+                        {partnerIsTyping ? (
+                          <>
+                            <span className="text-lime-300">typing</span>
+                            <span className="typing-dots" aria-label="typing">
+                              <span /> <span /> <span />
+                            </span>
+                          </>
+                        ) : selectedUser.is_online ? (
+                          <>
+                            <span className="inline-block h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.6)]" />
+                            Online now
+                          </>
+                        ) : (
+                          <>
+                            <span className="inline-block h-2 w-2 rounded-full bg-zinc-500" />
+                            Offline
+                          </>
+                        )}
                       </p>
                     </div>
 
@@ -706,7 +800,7 @@ export default function DirectMessages() {
                 </div>
 
                 {/* Messages Area */}
-                <div className="flex-1 min-h-0 overflow-y-auto bg-black px-4 py-4 space-y-4">
+                <div className="flex-1 min-h-0 overflow-y-auto bg-black px-3 sm:px-4 py-3 sm:py-4 space-y-3">
                   {messageSearchQuery && (
                     <div className="bg-lime-400/10 border border-lime-400/20 px-4 py-3 rounded-2xl flex items-center justify-between gap-3">
                       <span className="text-sm text-lime-300 break-words">
@@ -822,18 +916,24 @@ export default function DirectMessages() {
                             )}
                             id={`message-${msg.id}`}
                           >
-                            <div className={cn("max-w-[85%] md:max-w-[72%]", isSender ? 'order-2' : 'order-1')}>
+                            <div className={cn(
+                              "min-w-0 max-w-[88%] sm:max-w-[80%] md:max-w-[68%] lg:max-w-[60%] xl:max-w-[55%]",
+                              isSender ? 'order-2' : 'order-1'
+                            )}>
                               <div className="flex items-start gap-2">
                                 <div
                                   className={cn(
-                                    "rounded-2xl px-4 py-3 shadow-[0_24px_80px_rgba(0,0,0,0.35)] border",
+                                    "min-w-0 max-w-full overflow-hidden rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 border",
                                     isDeleted
-                                      ? 'bg-[#061006]/80 text-lime-100/45 italic border-lime-400/20'
+                                      ? 'bg-white/[0.03] text-slate-400 italic border-white/10'
                                       : isBroadcast
                                       ? 'bg-amber-500/10 text-amber-100 border-amber-500/20'
                                       : isSender
-                                      ? 'bg-lime-400 text-white border-lime-400/30'
-                                      : 'bg-[#020806]/90 text-slate-100 border-lime-400/15',
+                                      // Sender: solid emerald — readable at any size,
+                                      // brand-consistent (green family), white text.
+                                      ? 'bg-emerald-700 text-white border-emerald-600'
+                                      // Receiver: solid dark gray — Slack/Discord style.
+                                      : 'bg-zinc-800 text-white border-zinc-700',
                                     msg.is_pinned ? 'ring-2 ring-amber-400/40' : ''
                                   )}
                                 >
@@ -879,7 +979,7 @@ export default function DirectMessages() {
                 </div>
 
                 {/* Composer */}
-                <div className="p-4 border-t border-lime-400/15 bg-[#020806]/90">
+                <div className="px-3 py-3 sm:px-4 border-t border-lime-400/15 bg-[#020806]">
                   {editingMessage ? (
                     <RichTextEditor
                       key={`direct-edit-${editingMessage.id}-${editingMessage.updated_date || editingMessage.created_date || ''}`}
@@ -894,35 +994,59 @@ export default function DirectMessages() {
                     />
                   ) : (
                     <RichTextInput
-                      onSend={handleSendMessage}
+                      onSend={(html, attachments, mentions) => {
+                        // Send a stop-typing event right when the message
+                        // ships, so the partner's "typing…" cleanly turns off.
+                        if (partnerId) emitStopTyping(partnerId);
+                        clearTimeout(stopTypingTimerRef.current);
+                        lastTypingEmitRef.current = 0;
+                        handleSendMessage(html, attachments, mentions);
+                      }}
+                      onChange={(html) => {
+                        // Throttled typing emit: at most one per 2 seconds.
+                        if (!partnerId) return;
+                        const plain = (html || "").replace(/<[^>]*>/g, "").trim();
+                        if (!plain) return;
+                        const now = Date.now();
+                        if (now - lastTypingEmitRef.current > 2000) {
+                          emitTyping(partnerId);
+                          lastTypingEmitRef.current = now;
+                        }
+                        // Auto stop_typing after 3s of no further keystrokes.
+                        clearTimeout(stopTypingTimerRef.current);
+                        stopTypingTimerRef.current = setTimeout(() => {
+                          emitStopTyping(partnerId);
+                          lastTypingEmitRef.current = 0;
+                        }, 3000);
+                      }}
                       disabled={sendMessageMutation.isPending}
                       placeholder={`Message ${selectedUser.full_name}...`}
                       companyUsers={companyUsers}
                     />
                   )}
                 </div>
-              </Card>
+              </div>
             ) : (
-              <Card className="border border-lime-400/15 bg-[#020806]/90 h-full min-h-0 flex items-center justify-center rounded-[1.75rem] shadow-[0_14px_40px_rgba(0,0,0,0.18)] overflow-hidden">
-                <div className="text-center p-8 max-w-md">
-                  <div className="w-16 h-16 bg-[#061006]/80 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <MessageCircle className="w-8 h-8 text-lime-100/45" />
+              <div className="h-full min-h-0 flex items-center justify-center">
+                <div className="text-center p-8 max-w-sm">
+                  <div className="w-14 h-14 bg-lime-400/5 border border-lime-400/15 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <MessageCircle className="w-7 h-7 text-lime-300" />
                   </div>
-                  <h3 className="text-xl font-semibold text-white mb-2">
-                    Select a conversation
+                  <h3 className="text-base font-semibold text-white mb-1">
+                    Pick a conversation
                   </h3>
-                  <p className="text-lime-100/55">
-                    Choose a group chat or direct message from the sidebar to start chatting.
+                  <p className="text-sm text-lime-100/45">
+                    Choose a group chat or direct message from the sidebar.
                   </p>
 
                   <Button
-                    className="mt-6 lg:hidden bg-lime-400 hover:bg-lime-400 rounded-2xl"
+                    className="mt-5 lg:hidden bg-lime-400 hover:bg-lime-300 rounded-lg text-black"
                     onClick={() => setMobileSidebarOpen(true)}
                   >
-                    Open Sidebar
+                    Open conversations
                   </Button>
                 </div>
-              </Card>
+              </div>
             )}
           </div>
         </div>

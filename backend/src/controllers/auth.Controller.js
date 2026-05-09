@@ -124,7 +124,19 @@ export const login = asyncHandler(async (req, res) => {
 
   await user.populate('company_id');
 
-  if (user.role !== 'super_admin' && user.company_id) {
+  // If the user's active company has been deleted (or is missing entirely),
+  // don't block login — silently detach them so they land on the chooser
+  // and can pick another workspace from their history.
+  if (
+    user.company_id &&
+    (!user.company_id._id || user.company_id.status === 'deleted')
+  ) {
+    user.company_id = null;
+    user.employee_id = '';
+    user.joined_company_at = null;
+    if (user.role !== 'super_admin') user.role = 'user';
+    await user.save();
+  } else if (user.role !== 'super_admin' && user.company_id) {
     await clearExpiredCompanySuspension(user.company_id);
     const companyAccessBlock = getCompanyAccessBlock(user.company_id);
     if (companyAccessBlock) {
@@ -217,7 +229,17 @@ export const googleLogin = asyncHandler(async (req, res) => {
 
   await user.populate('company_id');
 
-  if (user.role !== 'super_admin' && user.company_id) {
+  // Silently detach if their active company has been deleted/missing.
+  if (
+    user.company_id &&
+    (!user.company_id._id || user.company_id.status === 'deleted')
+  ) {
+    user.company_id = null;
+    user.employee_id = '';
+    user.joined_company_at = null;
+    if (user.role !== 'super_admin') user.role = 'user';
+    await user.save();
+  } else if (user.role !== 'super_admin' && user.company_id) {
     await clearExpiredCompanySuspension(user.company_id);
     const companyAccessBlock = getCompanyAccessBlock(user.company_id);
     if (companyAccessBlock) {
@@ -265,7 +287,18 @@ export const getMe = asyncHandler(async (req, res) => {
     .populate('company_id');
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  if (user.role !== 'super_admin' && user.company_id) {
+  // If their active company has been deleted, transparently detach so the
+  // frontend redirects to /CompanySetup instead of erroring.
+  if (
+    user.company_id &&
+    (!user.company_id._id || user.company_id.status === 'deleted')
+  ) {
+    user.company_id = null;
+    user.employee_id = '';
+    user.joined_company_at = null;
+    if (user.role !== 'super_admin') user.role = 'user';
+    await user.save();
+  } else if (user.role !== 'super_admin' && user.company_id) {
     await clearExpiredCompanySuspension(user.company_id);
     const companyAccessBlock = getCompanyAccessBlock(user.company_id);
     if (companyAccessBlock) {

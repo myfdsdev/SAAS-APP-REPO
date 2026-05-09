@@ -90,9 +90,12 @@ const resolveMentionUsers = async (mentions = [], html = '', companyId) => {
 
   if (!mentionIds.length) return [];
 
-  return User.find({ company_id: companyId, _id: { $in: mentionIds } }).select(
-    '_id email full_name'
-  );
+  // Membership query so we can mention coworkers regardless of which
+  // workspace they're currently active in.
+  return User.find({
+    "workspaces.company_id": companyId,
+    _id: { $in: mentionIds },
+  }).select('_id email full_name');
 };
 
 const notifyMentionedUsers = async ({

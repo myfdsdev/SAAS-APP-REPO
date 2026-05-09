@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from "@/lib/AuthContext";
 import { AppSettingsProvider } from "@/lib/AppSettingsContext";
 import { ActivityTrackerProvider } from "@/lib/ActivityTracker";
 import { CompanyProvider } from "@/lib/CompanyContext";
+import CookieConsent from "@/components/CookieConsent";
 
 const { Pages, Layout } = pagesConfig;
 
@@ -44,6 +45,7 @@ const ADMIN_PAGES = [
   "AdminDashboard",
   "AttendanceReports",
   "CompanySettings",
+  "DomainSettings",
   "SalaryManagement",
   "SalaryBoard",
   "SalaryConfig",
@@ -127,11 +129,12 @@ const ProtectedRoute = ({ pageName, Page }) => {
     );
   }
 
-  if (user?.role === "super_admin") {
-    return <Navigate to="/SuperAdmin" replace />;
-  }
+  // Super admin = god mode. They can visit ANY page in the app, behave as a
+  // regular admin or user inside workspaces, and their role never changes.
+  // Skip every gate below for them.
+  const isSuperAdmin = user?.role === "super_admin";
 
-  if (pageName !== "CompleteProfile") {
+  if (!isSuperAdmin && pageName !== "CompleteProfile") {
     const isProfileComplete =
       user?.mobile_number && user?.department;
 
@@ -140,15 +143,24 @@ const ProtectedRoute = ({ pageName, Page }) => {
     }
   }
 
-  if (pageName === "CompanySetup" && user?.company_id) {
+  if (!isSuperAdmin && pageName === "CompanySetup" && user?.company_id) {
     return <Navigate to={getUserRedirectPage(user)} replace />;
   }
 
-  if (!["CompleteProfile", "CompanySetup"].includes(pageName) && !user?.company_id) {
+  if (
+    !isSuperAdmin &&
+    !["CompleteProfile", "CompanySetup"].includes(pageName) &&
+    !user?.company_id
+  ) {
     return <Navigate to="/CompanySetup" replace />;
   }
 
-  if (ADMIN_PAGES.includes(pageName) && user?.role !== "admin") {
+  // Admin pages: super_admin counts as admin.
+  if (
+    ADMIN_PAGES.includes(pageName) &&
+    user?.role !== "admin" &&
+    !isSuperAdmin
+  ) {
     return <Navigate to="/AccessDenied" replace />;
   }
 
@@ -220,6 +232,7 @@ function App() {
               }}
             />
             <AppAlertHost />
+            <CookieConsent />
           </QueryClientProvider>
         </CompanyProvider>
       </AuthProvider>

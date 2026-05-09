@@ -261,7 +261,8 @@ export const getMyAnalytics = asyncHandler(async (req, res) => {
 });
 
 export const getUserAnalytics = asyncHandler(async (req, res) => {
-  const user = await User.findOne({ _id: req.params.userId, company_id: req.company_id }).lean();
+  // Membership lookup — admin can view analytics for any team member.
+  const user = await User.findOne({ _id: req.params.userId, "workspaces.company_id": req.company_id }).lean();
   if (!user) return res.status(404).json({ error: "User not found" });
   res.json(await getAnalyticsForUser(user));
 });
@@ -269,7 +270,7 @@ export const getUserAnalytics = asyncHandler(async (req, res) => {
 export const getTeamAnalytics = asyncHandler(async (req, res) => {
   const currentMonthStart = monthStart(new Date());
   const [users, attendance] = await Promise.all([
-    User.countDocuments({ company_id: req.company_id, is_active: { $ne: false } }),
+    User.countDocuments({ "workspaces.company_id": req.company_id, is_active: { $ne: false } }),
     Attendance.aggregate([
       { $match: { company_id: req.company_id, date: { $gte: currentMonthStart } } },
       {

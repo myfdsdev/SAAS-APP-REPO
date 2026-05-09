@@ -68,7 +68,8 @@ export const upsertPayslip = asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'month must be in YYYY-MM format' });
   }
 
-  const user = await User.findOne({ _id: user_id, company_id: req.company_id });
+  // Membership-based — payroll covers every team member, even those currently active elsewhere.
+  const user = await User.findOne({ _id: user_id, "workspaces.company_id": req.company_id });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   const settings = await AppSettings.getForCompany(req.company_id);
@@ -113,7 +114,7 @@ export const sendPayslip = asyncHandler(async (req, res) => {
   const payslip = await Payslip.findOne({ _id: req.params.id, company_id: req.company_id });
   if (!payslip) return res.status(404).json({ error: 'Payslip not found' });
 
-  const user = await User.findOne({ _id: payslip.user_id, company_id: req.company_id });
+  const user = await User.findOne({ _id: payslip.user_id, "workspaces.company_id": req.company_id });
   if (!user) return res.status(404).json({ error: 'Employee not found' });
 
   const settings = await AppSettings.getForCompany(req.company_id);

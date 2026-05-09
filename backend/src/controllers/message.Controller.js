@@ -82,9 +82,12 @@ const resolveMentionUsers = async (mentions = [], html = "", companyId) => {
 
   if (!mentionIds.length) return [];
 
-  return User.find({ company_id: companyId, _id: { $in: mentionIds } }).select(
-    "_id email full_name"
-  );
+  // Match by membership so we can mention coworkers who're currently in
+  // another workspace (Slack-style — async messages reach them).
+  return User.find({
+    "workspaces.company_id": companyId,
+    _id: { $in: mentionIds },
+  }).select("_id email full_name");
 };
 
 const validateAttachments = (attachments = []) => {
@@ -162,7 +165,13 @@ export const sendMessage = asyncHandler(async (req, res) => {
       .json({ error: "receiver_id and message_text or attachments required" });
   }
 
-  const receiver = await User.findOne({ _id: receiver_id, company_id: req.company_id });
+  // Validate the receiver is a member of this workspace (membership), not
+  // necessarily currently active in it. They'll get the message when they
+  // come back, just like Slack DMs.
+  const receiver = await User.findOne({
+    _id: receiver_id,
+    "workspaces.company_id": req.company_id,
+  });
   if (!receiver) return res.status(404).json({ error: "Receiver not found" });
 
   const mentionedUsers = await resolveMentionUsers(mentions, message_text, req.company_id);
@@ -226,7 +235,12 @@ export const getConversation = asyncHandler(async (req, res) => {
   const { userId } = req.params;
   const { limit = 100, before } = req.query;
 
-  const partner = await User.findOne({ _id: userId, company_id: req.company_id }).select("_id");
+  // Membership-based lookup so the conversation history loads even when the
+  // partner is currently active in a different workspace.
+  const partner = await User.findOne({
+    _id: userId,
+    "workspaces.company_id": req.company_id,
+  }).select("_id");
   if (!partner) return res.status(404).json({ error: "Conversation user not found" });
 
   const filter = {
@@ -593,7 +607,9 @@ export const broadcastMessage = asyncHandler(async (req, res) => {
       .json({ error: "user_ids array and message_text required" });
   }
 
-  const users = await User.find({ company_id: req.company_id, _id: { $in: user_ids } });
+  // Membership-based — broadcasts can reach any team member, even those
+  // currently active in another workspace.
+  const users = await User.find({ "workspaces.company_id": req.company_id, _id: { $in: user_ids } });
   const messages = [];
 
   for (const receiver of users) {

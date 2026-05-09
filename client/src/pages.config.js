@@ -30,6 +30,7 @@ import MyStats from './pages/MyStats';
 import ResetPassword from './pages/ResetPassword';
 import SalaryManagement from './pages/admin/SalaryManagement';
 import CompanySettings from './pages/admin/CompanySettings';
+import DomainSettings from './pages/admin/DomainSettings';
 import MySalary from './pages/MySalary';
 import SuperAdmin from './pages/SuperAdmin';
 
@@ -58,6 +59,7 @@ export const PAGES = {
     "ResetPassword": ResetPassword,
     "SalaryManagement": SalaryManagement,
     "CompanySettings": CompanySettings,
+    "DomainSettings": DomainSettings,
     // Backwards-compat aliases for any old links to the previous salary pages
     "SalaryBoard": SalaryManagement,
     "SalaryConfig": SalaryManagement,

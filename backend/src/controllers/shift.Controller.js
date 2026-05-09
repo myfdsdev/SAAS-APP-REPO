@@ -83,7 +83,7 @@ export const assignShiftToUser = asyncHandler(async (req, res) => {
   if (!requireAdmin(req, res)) return;
 
   const { shift_id } = req.body;
-  const user = await User.findOne({ _id: req.params.userId, company_id: req.company_id });
+  const user = await User.findOne({ _id: req.params.userId, "workspaces.company_id": req.company_id });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   if (shift_id) {

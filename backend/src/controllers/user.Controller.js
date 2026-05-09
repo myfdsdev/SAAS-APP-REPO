@@ -8,7 +8,9 @@ import { getNextEmployeeId } from '../utils/employeeIdGenerator.js';
 export const getAllUsers = asyncHandler(async (req, res) => {
   const { role, department, search, sort = '-createdAt', limit = 100, page = 1 } = req.query;
 
-  const filter = { company_id: req.company_id };
+  // Membership-based — list every team member regardless of which workspace
+  // they're currently active in.
+  const filter = { "workspaces.company_id": req.company_id };
   if (role) filter.role = role;
   if (department) filter.department = department;
   if (search) {
@@ -41,9 +43,11 @@ export const getAllUsers = asyncHandler(async (req, res) => {
 // @route   GET /api/users/:id
 // @access  Private
 export const getUserById = asyncHandler(async (req, res) => {
+  // Membership-based — any team member is fetchable, regardless of which
+  // workspace they're currently active in.
   const user = await User.findOne({
     _id: req.params.id,
-    company_id: req.company_id,
+    "workspaces.company_id": req.company_id,
   }).select('-password').populate('shift_id');
 
   if (!user) {
@@ -93,7 +97,7 @@ export const updateUser = asyncHandler(async (req, res) => {
 
   const before = await User.findOne({
     _id: req.params.id,
-    company_id: req.company_id,
+    "workspaces.company_id": req.company_id,
   }).select('is_active');
   if (!before) return res.status(404).json({ error: 'User not found' });
 
@@ -108,18 +112,26 @@ export const updateUser = asyncHandler(async (req, res) => {
   }
 
   if (updates.employee_id) {
+    // Uniqueness check: any membership in this workspace that already uses
+    // this employee_id (catches members whose active session is elsewhere).
     const existing = await User.findOne({
       _id: { $ne: req.params.id },
-      company_id: req.company_id,
-      employee_id: updates.employee_id,
+      workspaces: {
+        $elemMatch: {
+          company_id: req.company_id,
+          employee_id: updates.employee_id,
+        },
+      },
     });
     if (existing) {
       return res.status(400).json({ error: 'Employee ID already exists in this company' });
     }
   }
 
+  // Membership-based — admin can update any team member, even one whose
+  // active session is in a different workspace.
   const user = await User.findOneAndUpdate(
-    { _id: req.params.id, company_id: req.company_id },
+    { _id: req.params.id, "workspaces.company_id": req.company_id },
     updates,
     { new: true, runValidators: true }
   ).select('-password').populate('shift_id');
@@ -148,7 +160,7 @@ export const deleteUser = asyncHandler(async (req, res) => {
 
   const user = await User.findOneAndDelete({
     _id: req.params.id,
-    company_id: req.company_id,
+    "workspaces.company_id": req.company_id,
   });
 
   if (!user) {
@@ -176,7 +188,7 @@ export const changeUserRole = asyncHandler(async (req, res) => {
   }
 
   const user = await User.findOneAndUpdate(
-    { _id: req.params.id, company_id: req.company_id },
+    { _id: req.params.id, "workspaces.company_id": req.company_id },
     { role },
     { new: true }
   ).select('-password');
@@ -202,7 +214,12 @@ export const getOnlineUsers = asyncHandler(async (req, res) => {
 // @route   GET /api/users/for-messaging
 // @access  Private
 export const getUsersForMessaging = asyncHandler(async (req, res) => {
-  const users = await User.find({ company_id: req.company_id, _id: { $ne: req.user._id } })
+  // Membership-based — list every team member, not just those active in this
+  // workspace right now. Async messages reach offline/elsewhere coworkers.
+  const users = await User.find({
+    "workspaces.company_id": req.company_id,
+    _id: { $ne: req.user._id },
+  })
     .select('_id email full_name profile_photo department role is_online last_active')
     .sort('full_name');
 
@@ -234,9 +251,11 @@ export const inviteUser = asyncHandler(async (req, res) => {
   const assignedEmployeeId = employee_id || await getNextEmployeeId(req.company_id);
 
   if (assignedEmployeeId) {
+    // Uniqueness against any team member's membership in this workspace.
     const duplicateEmployee = await User.findOne({
-      company_id: req.company_id,
-      employee_id: assignedEmployeeId,
+      workspaces: {
+        $elemMatch: { company_id: req.company_id, employee_id: assignedEmployeeId },
+      },
     });
     if (duplicateEmployee) {
       return res.status(400).json({ error: 'Employee ID already exists in this company' });
@@ -252,6 +271,17 @@ export const inviteUser = asyncHandler(async (req, res) => {
     employee_id: assignedEmployeeId,
     company_id: req.company_id,
     joined_company_at: new Date(),
+    // Seed the membership entry so the new user shows up in team lists
+    // immediately, and can switch back later from the chooser.
+    workspaces: [
+      {
+        company_id: req.company_id,
+        employee_id: assignedEmployeeId || "",
+        role: role === "admin" ? "admin" : "user",
+        joined_at: new Date(),
+        last_used_at: new Date(),
+      },
+    ],
   });
 
   res.status(201).json({

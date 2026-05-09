@@ -38,6 +38,8 @@ import analyticsRoutes from "./src/routes/analytics.Routes.js";
 import salaryRoutes from "./src/routes/salary.Routes.js";
 import feedbackRoutes from "./src/routes/feedback.Routes.js";
 import superAdminRoutes from "./src/routes/superAdmin.Routes.js";
+import domainRoutes from "./src/routes/domain.Routes.js";
+import { resolveCompanyFromDomain } from "./src/middleware/domainResolver.js";
 // Load env FIRST
 
 // Config & middleware imports
@@ -74,16 +76,67 @@ app.use(helmet());
 // Allow multiple frontend origins (dev + production)
 const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
   .split(",")
-  .map((url) => url.trim());
+  .map((url) => url.trim())
+  .filter(Boolean);
+
+const MAIN_DOMAIN = (process.env.MAIN_DOMAIN || "").toLowerCase();
+
+// Cache verified custom domains so we don't hit Mongo on every preflight.
+// Refreshed every 60s — short enough that a newly-verified domain works fast.
+import Company from "./src/models/Company.js";
+let customDomainCache = new Set();
+let lastCacheRefresh = 0;
+const refreshCustomDomains = async () => {
+  try {
+    const rows = await Company.find(
+      { custom_domain_verified: true, custom_domain: { $ne: null } },
+      "custom_domain",
+    ).lean();
+    customDomainCache = new Set(rows.map((r) => r.custom_domain));
+    lastCacheRefresh = Date.now();
+  } catch (err) {
+    console.error("[CORS] failed to refresh custom-domain cache:", err.message);
+  }
+};
+refreshCustomDomains();
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+
+  let host;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+
+  // Any subdomain of our main domain (Scenario B)
+  if (MAIN_DOMAIN && (host === MAIN_DOMAIN || host.endsWith(`.${MAIN_DOMAIN}`))) {
+    return true;
+  }
+
+  // Verified custom domains (Scenario C)
+  if (customDomainCache.has(host)) return true;
+
+  return false;
+};
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (like Postman, mobile apps, health checks)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
+      if (isAllowedOrigin(origin)) return callback(null, true);
+
+      // Stale-cache fallback: if it could be a custom domain, refresh and retry once.
+      if (Date.now() - lastCacheRefresh > 60_000) {
+        refreshCustomDomains().then(() => {
+          if (isAllowedOrigin(origin)) return callback(null, true);
+          console.warn(`[CORS] Blocked origin: ${origin}`);
+          return callback(new Error("Not allowed by CORS"), false);
+        });
+        return;
       }
+
       console.warn(`[CORS] Blocked origin: ${origin}`);
       return callback(new Error("Not allowed by CORS"), false);
     },
@@ -93,10 +146,17 @@ app.use(
   }),
 );
 
+// Bust the cache as soon as a custom domain gets verified/removed.
+export const invalidateCorsCache = () => refreshCustomDomains();
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 app.use(compression());
+
+// Resolve tenant company from Host header (subdomain or verified custom domain).
+// Must run before routes so /api/domains/info and any tenant-aware code see it.
+app.use(resolveCompanyFromDomain);
 
 if (process.env.NODE_ENV !== "production") {
   app.use(morgan("dev"));
@@ -164,6 +224,7 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/salary", salaryRoutes);
 app.use("/api/feedback", feedbackRoutes);
 app.use("/api/super-admin", superAdminRoutes);
+app.use("/api/domains", domainRoutes);
 
 // ==========================================
 // ERROR HANDLING (must be last!)

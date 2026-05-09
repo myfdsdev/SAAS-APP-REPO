@@ -199,10 +199,124 @@
 
   .rich-chat-message img,
   .rich-chat-message video {
-    @apply my-2 max-h-80 rounded-xl object-contain;
+    @apply my-2 max-w-full max-h-80 rounded-xl object-contain;
+    height: auto;
   }
 
+  /* Long URLs, code, and pasted strings shouldn't blow out the bubble */
+  .rich-chat-message,
+  .rich-chat-message p,
+  .rich-chat-message li,
+  .rich-chat-message td,
+  .rich-chat-message blockquote {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .rich-chat-message pre {
+    @apply max-w-full overflow-x-auto whitespace-pre-wrap;
+  }
+
+  .rich-chat-message table {
+    @apply block max-w-full overflow-x-auto;
+  }
+
+  /* Sender bubble is dark with lime tint — links pop in lime so they're
+     readable against the soft green background */
   .rich-chat-own .rich-chat-message a {
-    @apply text-white underline decoration-white/60 underline-offset-2 dark:text-black dark:decoration-black/50;
+    @apply text-lime-300 underline decoration-lime-300/50 underline-offset-2;
+  }
+
+  /* ---- Auto embeds (YouTube / Vimeo / Loom / video / image / link) ---- */
+
+  .msg-embed {
+    @apply max-w-full overflow-hidden rounded-xl border border-white/10 bg-black/40;
+  }
+
+  .msg-embed-video {
+    @apply relative w-full max-w-full;
+    aspect-ratio: 16 / 9;
+  }
+
+  .msg-embed-video iframe,
+  .msg-embed-video video {
+    @apply absolute inset-0 h-full w-full;
+  }
+
+  .msg-embed-image-wrap {
+    @apply block overflow-hidden rounded-xl border border-white/10;
+  }
+
+  .msg-embed-image {
+    @apply max-h-80 w-auto object-contain;
+  }
+
+  /* ---- Generic link preview card ---- */
+
+  .msg-link-card {
+    @apply flex max-w-full items-center gap-3 rounded-xl border border-white/10 bg-white/[0.04] p-3 transition hover:border-lime-400/40 hover:bg-lime-400/5;
+    text-decoration: none !important;
+  }
+
+  .rich-chat-own .msg-link-card {
+    @apply border-lime-400/20 bg-black/30 hover:border-lime-400/40 hover:bg-black/40;
+  }
+
+  .msg-link-card-favicon {
+    @apply h-8 w-8 shrink-0 rounded-md bg-white/5 object-contain p-1;
+  }
+
+  .msg-link-card-body {
+    @apply min-w-0 flex-1;
+  }
+
+  .msg-link-card-host {
+    @apply flex items-center gap-1 truncate text-sm font-semibold text-lime-300;
+  }
+
+  .rich-chat-own .msg-link-card-host {
+    @apply text-lime-300;
+  }
+
+  .msg-link-card-icon {
+    @apply opacity-50;
+  }
+
+  .msg-link-card-path {
+    @apply truncate text-xs text-white/50;
+  }
+
+  .rich-chat-own .msg-link-card-path {
+    @apply text-white/45;
+  }
+
+  /* ---- Typing indicator ---- */
+
+  .typing-dots {
+    @apply inline-flex items-center gap-1;
+  }
+
+  .typing-dots span {
+    @apply inline-block h-1.5 w-1.5 rounded-full bg-lime-300;
+    animation: typing-bounce 1.2s infinite ease-in-out;
+  }
+
+  .typing-dots span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .typing-dots span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  @keyframes typing-bounce {
+    0%, 60%, 100% {
+      transform: translateY(0);
+      opacity: 0.4;
+    }
+    30% {
+      transform: translateY(-3px);
+      opacity: 1;
+    }
   }
 }

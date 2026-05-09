@@ -47,7 +47,12 @@ export const addGroupMember = asyncHandler(async (req, res) => {
   const group = await Group.findOne({ _id: group_id, company_id: req.company_id });
   if (!group) return res.status(404).json({ error: 'Group not found' });
 
-  const user = await User.findOne({ _id: user_id, company_id: req.company_id });
+  // Membership-based lookup — let admins add coworkers to groups even if
+  // those coworkers are currently active in another workspace.
+  const user = await User.findOne({
+    _id: user_id,
+    "workspaces.company_id": req.company_id,
+  });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   // Permission

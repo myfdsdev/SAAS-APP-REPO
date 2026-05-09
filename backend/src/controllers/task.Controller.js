@@ -54,7 +54,9 @@ export const createTask = asyncHandler(async (req, res) => {
 
   // Assignment details
   if (assigned_to) {
-    const assignee = await User.findOne({ _id: assigned_to, company_id: req.company_id });
+    // Membership-based: a task can be assigned to any team member regardless
+    // of which workspace they're currently active in.
+    const assignee = await User.findOne({ _id: assigned_to, "workspaces.company_id": req.company_id });
     if (assignee) {
       taskData.assigned_to = assignee._id;
       taskData.assigned_to_email = assignee.email;

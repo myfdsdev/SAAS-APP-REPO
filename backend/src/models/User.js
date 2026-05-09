@@ -119,6 +119,27 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    // History of every workspace this user has been part of.
+    // The currently-active one mirrors `company_id`; the others are dormant
+    // memberships the user can switch back to via /api/companies/switch/:id.
+    // We retain employee_id + role per-membership so switching restores them.
+    workspaces: [
+      {
+        company_id: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "Company",
+          required: true,
+        },
+        employee_id: { type: String, default: "" },
+        role: {
+          type: String,
+          enum: ["admin", "user"],
+          default: "user",
+        },
+        joined_at: { type: Date, default: Date.now },
+        last_used_at: { type: Date, default: Date.now },
+      },
+    ],
     is_profile_complete: {
       type: Boolean,
       default: false,

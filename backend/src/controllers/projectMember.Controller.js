@@ -47,7 +47,9 @@ export const addProjectMember = asyncHandler(async (req, res) => {
   const project = await Project.findOne({ _id: project_id, company_id: req.company_id });
   if (!project) return res.status(404).json({ error: 'Project not found' });
 
-  const user = await User.findOne({ _id: user_id, company_id: req.company_id });
+  // Membership-based — admins can add any team member to a project, regardless
+  // of which workspace they're currently active in.
+  const user = await User.findOne({ _id: user_id, "workspaces.company_id": req.company_id });
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   // Permission check

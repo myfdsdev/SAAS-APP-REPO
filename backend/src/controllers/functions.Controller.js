@@ -111,7 +111,9 @@ export const checkMessageReminders = asyncHandler(async (req, res) => {
 
   let triggered = 0;
   for (const reminder of dueReminders) {
-    const user = await User.findOne({ _id: reminder.user_id, company_id: req.company_id });
+    // Membership-based: a reminder for a member should fire even if they're
+    // currently active in another workspace.
+    const user = await User.findOne({ _id: reminder.user_id, "workspaces.company_id": req.company_id });
     if (!user) continue;
 
     await Notification.create({
@@ -158,7 +160,7 @@ export const exportAttendanceReport = asyncHandler(async (req, res) => {
   const monthEnd = `${month}-31`;
 
   // Get employees
-  const employees = await User.find({ company_id: req.company_id, role: 'user' }).sort('full_name');
+  const employees = await User.find({ "workspaces.company_id": req.company_id, "workspaces.role": "user" }).sort('full_name');
 
   // Get attendance in date range
   const attendance = await Attendance.find({
@@ -455,7 +457,7 @@ export const sendAttendanceReminder = asyncHandler(async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
 
   // All employees (non-admin)
-  const employees = await User.find({ company_id: req.company_id, role: 'user' });
+  const employees = await User.find({ "workspaces.company_id": req.company_id, "workspaces.role": "user" });
 
   // Today's attendance
   const todayAttendance = await Attendance.find({ company_id: req.company_id, date: today });
@@ -495,8 +497,14 @@ export const sendAttendanceReminder = asyncHandler(async (req, res) => {
 // POST /api/functions/get-users-for-messaging
 // ==========================================
 export const getUsersForMessaging = asyncHandler(async (req, res) => {
-  const users = await User.find({ company_id: req.company_id, _id: { $ne: req.user._id } })
-    .select('_id email full_name profile_photo department role is_online last_active')
+  // Query by membership (workspaces.company_id) instead of active company_id,
+  // so coworkers who are currently in a different workspace still appear in
+  // the messaging list — async messages should reach them like Slack DMs.
+  const users = await User.find({
+    "workspaces.company_id": req.company_id,
+    _id: { $ne: req.user._id },
+  })
+    .select('_id email full_name profile_photo department role is_online last_active company_id')
     .sort('full_name');
 
   const normalizedUsers = users.map((u) => ({

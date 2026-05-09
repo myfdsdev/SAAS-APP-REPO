@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { createPageUrl } from "@/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -31,6 +32,9 @@ import {
   MessageSquarePlus,
   ShieldCheck,
   MessageCircleMore,
+  Globe,
+  Crown,
+  ArrowLeft,
 } from "lucide-react";
 import NotificationBell from "./components/notifications/NotificationBell";
 import NotificationPermissionPrompt from "./components/notifications/NotificationPermissionPrompt";
@@ -41,6 +45,7 @@ import { useMessageDesktopNotifications } from "./components/hooks/useMessageDes
 import { useProjectNotifications } from "./components/hooks/useProjectNotifications";
 import OnlineStatusIndicator from "./components/admin/OnlineStatusIndicator";
 import { useCompany } from "@/lib/CompanyContext";
+import { useAuth } from "@/lib/AuthContext";
 
 const employeeNavItems = [
   { name: "Dashboard", page: "Dashboard", icon: LayoutDashboard },
@@ -61,6 +66,7 @@ const adminNavItems = [
   { name: "Attendance Reports", page: "AttendanceReports", icon: BarChart3 },
   { name: "Salary Management", page: "SalaryManagement", icon: DollarSign },
   { name: "Company Settings", page: "CompanySettings", icon: Settings },
+  { name: "Domain Settings", page: "DomainSettings", icon: Globe },
   { name: "Settings", page: "Settings", icon: Settings },
   { name: "My Dashboard", page: "Dashboard", icon: Users },
   { name: "Attendance History", page: "AttendanceHistory", icon: Clock },
@@ -82,7 +88,9 @@ export default function Layout({ children, currentPageName }) {
   const [user, setUser] = useState(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const { company } = useCompany();
+  const { company, refreshCompany } = useCompany();
+  const { refreshUser } = useAuth();
+  const navigate = useNavigate();
 
   useEffect(() => {
     base44.auth.me().then(setUser);
@@ -106,6 +114,20 @@ export default function Layout({ children, currentPageName }) {
 
   const handleLogout = () => {
     base44.auth.logout();
+  };
+
+  // "Exit workspace" — leave the current company but stay logged in,
+  // then drop the user on the workspace chooser so they can join/create another.
+  const handleExitWorkspace = async () => {
+    try {
+      await base44.companies.leave();
+      await refreshUser();
+      await refreshCompany();
+      toast.success("You've left the workspace");
+      navigate("/CompanySetup", { replace: true });
+    } catch (err) {
+      toast.error(err?.error || err?.message || "Could not exit workspace");
+    }
   };
 
   const NavLinks = ({ onClick, collapsed = false }) => (
@@ -379,13 +401,42 @@ export default function Layout({ children, currentPageName }) {
 
                 <DropdownMenuSeparator className="bg-[#061006]/80" />
 
-                <DropdownMenuItem
-                  onClick={handleLogout}
-                  className="text-rose-400 focus:bg-rose-500/10 focus:text-rose-400 cursor-pointer"
-                >
-                  <LogOut className="w-4 h-4 mr-2" />
-                  Logout
-                </DropdownMenuItem>
+                {/* On the Super Admin panel, the bottom action becomes
+                    "Exit Super Admin" — navigates back to the user's workspace
+                    (or chooser) without leaving any company. Everywhere else,
+                    super_admins still see "Super Admin Console" + the regular
+                    "Exit workspace" item. */}
+                {currentPageName === "SuperAdmin" ? (
+                  <DropdownMenuItem
+                    onClick={() =>
+                      navigate(user.company_id ? "/AdminDashboard" : "/CompanySetup")
+                    }
+                    className="text-amber-300 focus:bg-amber-500/10 focus:text-amber-200 cursor-pointer"
+                  >
+                    <ArrowLeft className="w-4 h-4 mr-2" />
+                    Exit Super Admin
+                  </DropdownMenuItem>
+                ) : (
+                  <>
+                    {user.role === "super_admin" && (
+                      <DropdownMenuItem
+                        onClick={() => navigate("/SuperAdmin")}
+                        className="text-amber-300 focus:bg-amber-500/10 focus:text-amber-200 cursor-pointer"
+                      >
+                        <Crown className="w-4 h-4 mr-2" />
+                        Super Admin Console
+                      </DropdownMenuItem>
+                    )}
+
+                    <DropdownMenuItem
+                      onClick={handleExitWorkspace}
+                      className="text-rose-400 focus:bg-rose-500/10 focus:text-rose-400 cursor-pointer"
+                    >
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Exit workspace
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -469,11 +520,26 @@ export default function Layout({ children, currentPageName }) {
                 <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-lime-400/15 bg-[#020806]/90">
                   <Button
                     variant="outline"
-                    onClick={handleLogout}
-                    className="w-full text-rose-400 border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 hover:text-rose-300 hover:border-rose-500/40"
+                    onClick={
+                      currentPageName === "SuperAdmin"
+                        ? () =>
+                            navigate(user.company_id ? "/AdminDashboard" : "/CompanySetup")
+                        : handleExitWorkspace
+                    }
+                    className={
+                      currentPageName === "SuperAdmin"
+                        ? "w-full text-amber-300 border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 hover:text-amber-200 hover:border-amber-500/40"
+                        : "w-full text-rose-400 border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 hover:text-rose-300 hover:border-rose-500/40"
+                    }
                   >
-                    <LogOut className="w-4 h-4 mr-2" />
-                    Logout
+                    {currentPageName === "SuperAdmin" ? (
+                      <ArrowLeft className="w-4 h-4 mr-2" />
+                    ) : (
+                      <LogOut className="w-4 h-4 mr-2" />
+                    )}
+                    {currentPageName === "SuperAdmin"
+                      ? "Exit Super Admin"
+                      : "Exit workspace"}
                   </Button>
                 </div>
               </SheetContent>

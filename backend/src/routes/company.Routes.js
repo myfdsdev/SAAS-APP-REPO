@@ -2,6 +2,11 @@ import express from "express";
 import {
   createCompany,
   joinCompany,
+  leaveCompany,
+  listMyWorkspaces,
+  switchWorkspace,
+  setDefaultWorkspace,
+  leaveSpecificWorkspace,
   getMyCompany,
   updateMyCompany,
   regenerateInviteCode,
@@ -22,6 +27,11 @@ router.use(protect);
 
 router.post("/create", createCompany);
 router.post("/join", joinCompany);
+router.post("/leave", leaveCompany);
+router.get("/workspaces", listMyWorkspaces);
+router.post("/switch/:companyId", switchWorkspace);
+router.post("/default/:companyId", setDefaultWorkspace);
+router.post("/leave/:companyId", leaveSpecificWorkspace);
 
 router.get("/my", getMyCompany);
 router.put("/my", updateMyCompany);

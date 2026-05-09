@@ -149,6 +149,30 @@ export const softDeleteCompany = asyncHandler(async (req, res) => {
   const companyUsers = await User.find({ company_id: company._id }).select("_id");
   await disconnectUsers(companyUsers, "company_deleted");
 
+  // Detach the deleted company from every member so they fall through to the
+  // workspace chooser on next login. We DON'T remove the workspace history
+  // entry — listMyWorkspaces filters out memberships whose company has been
+  // deleted (populate returns null), but we keep the row in case the company
+  // is ever restored.
+  // Step 1: clear company-specific fields for every member.
+  await User.updateMany(
+    { company_id: company._id },
+    {
+      $set: {
+        company_id: null,
+        employee_id: "",
+        joined_company_at: null,
+      },
+    },
+  );
+  // Step 2: reset role to "user" — but only for the users we just detached
+  // (matched via _id list) and never for super admins.
+  const affectedIds = companyUsers.map((u) => u._id);
+  await User.updateMany(
+    { _id: { $in: affectedIds }, role: { $ne: "super_admin" } },
+    { $set: { role: "user" } },
+  );
+
   res.json({ message: "Company deleted", company });
 });
 

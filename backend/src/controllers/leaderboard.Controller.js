@@ -31,7 +31,7 @@ const buildLeaderboardEntry = (user, points, rank) => ({
 export const getLeaderboard = asyncHandler(async (req, res) => {
   const { month, limit = 50 } = req.query;
   const { startDate, endDate } = getMonthBounds(month);
-  const users = await User.find({ company_id: req.company_id, is_active: { $ne: false } })
+  const users = await User.find({ "workspaces.company_id": req.company_id, is_active: { $ne: false } })
     .select("full_name email department profile_photo total_points current_rank badges")
     .lean();
 
@@ -75,7 +75,7 @@ export const getMyRankAndAchievements = asyncHandler(async (req, res) => {
 export const awardCurrentEmployeeOfMonth = asyncHandler(async (req, res) => {
   const { month } = req.body || {};
   const { startDate, endDate } = getMonthBounds(month);
-  const users = await User.find({ company_id: req.company_id, is_active: { $ne: false } });
+  const users = await User.find({ "workspaces.company_id": req.company_id, is_active: { $ne: false } });
 
   const entries = await Promise.all(
     users.map(async (user) => {

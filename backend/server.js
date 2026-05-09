@@ -39,21 +39,20 @@ import salaryRoutes from "./src/routes/salary.Routes.js";
 import feedbackRoutes from "./src/routes/feedback.Routes.js";
 import superAdminRoutes from "./src/routes/superAdmin.Routes.js";
 import domainRoutes from "./src/routes/domain.Routes.js";
-import { resolveCompanyFromDomain } from "./src/middleware/domainResolver.js";
-// Load env FIRST
-
-// Config & middleware imports
 import connectDB from "./src/config/db.js";
+import {
+  allowedOrigins,
+  isDirectlyAllowedOrigin,
+  normalizeOrigin,
+} from "./src/config/cors.js";
 import { initCronJobs } from "./src/jobs/index.js";
 import { startAutoCheckoutCron } from "./src/cron/autoCheckout.js";
+import { resolveCompanyFromDomain } from "./src/middleware/domainResolver.js";
+import Company from "./src/models/Company.js";
 import "./src/config/cloudinary.js";
 import "./src/config/email.js";
 import { initSocket } from "./src/sockets/index.js";
 import { errorHandler, notFound } from "./src/middleware/errorHandler.js";
-
-// Connect to MongoDB BEFORE we start listening, so the success/error log
-// appears in a clean order (before the "Server: development mode" banner).
-// connectDB() is awaited just below where we call httpServer.listen.
 
 // Init cron jobs (only in production or if explicitly enabled)
 if (
@@ -74,49 +73,53 @@ const httpServer = createServer(app); // for socket.io
 // ==========================================
 app.use(helmet());
 
-// Allow multiple frontend origins (dev + production)
-const allowedOrigins = (process.env.FRONTEND_URL ||
-  "https://attendease-6v4v.onrender.com",
-"http://localhost:5173")
-  .split(",")
-  .map((url) => url.trim())
-  .filter(Boolean);
+const normalizeHostname = (value = "") =>
+  normalizeOrigin(value)
+    .replace(/^https?:\/\//i, "")
+    .replace(/\/.*$/, "")
+    .toLowerCase();
 
-const MAIN_DOMAIN = (process.env.MAIN_DOMAIN || "").toLowerCase();
+const MAIN_DOMAIN = normalizeHostname(process.env.MAIN_DOMAIN || "");
 
-console.log('Origines',process.env.FRONTEND_URL);
+console.log("[CORS] Allowed Origins:", JSON.stringify(allowedOrigins));
 
 // Cache verified custom domains so we don't hit Mongo on every preflight.
-// Refreshed every 60s — short enough that a newly-verified domain works fast.
-import Company from "./src/models/Company.js";
 let customDomainCache = new Set();
 let lastCacheRefresh = 0;
+
 const refreshCustomDomains = async () => {
   try {
     const rows = await Company.find(
       { custom_domain_verified: true, custom_domain: { $ne: null } },
       "custom_domain",
     ).lean();
-    customDomainCache = new Set(rows.map((r) => r.custom_domain));
+
+    customDomainCache = new Set(
+      rows
+        .map((row) => normalizeHostname(row.custom_domain))
+        .filter(Boolean),
+    );
     lastCacheRefresh = Date.now();
   } catch (err) {
     console.error("[CORS] failed to refresh custom-domain cache:", err.message);
   }
 };
+
 refreshCustomDomains();
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
-  if (allowedOrigins.includes(origin)) return true;
+
+  const cleanOrigin = normalizeOrigin(origin);
+  if (isDirectlyAllowedOrigin(cleanOrigin)) return true;
 
   let host;
   try {
-    host = new URL(origin).hostname.toLowerCase();
+    host = new URL(cleanOrigin).hostname.toLowerCase();
   } catch {
     return false;
   }
 
-  // Any subdomain of our main domain (Scenario B)
   if (
     MAIN_DOMAIN &&
     (host === MAIN_DOMAIN || host.endsWith(`.${MAIN_DOMAIN}`))
@@ -124,43 +127,43 @@ const isAllowedOrigin = (origin) => {
     return true;
   }
 
-  // Verified custom domains (Scenario C)
   if (customDomainCache.has(host)) return true;
 
   return false;
 };
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) return callback(null, true);
+const corsOptions = {
+  origin: (origin, callback) => {
+    const cleanOrigin = normalizeOrigin(origin || "");
 
-      // Stale-cache fallback: if it could be a custom domain, refresh and retry once.
-      if (Date.now() - lastCacheRefresh > 60_000) {
-        refreshCustomDomains().then(() => {
-          if (isAllowedOrigin(origin)) return callback(null, true);
-          console.warn(`[CORS] Blocked origin: ${origin}`);
-          // IMPORTANT: pass `false` instead of an Error. An Error makes
-          // the cors middleware throw, which Express turns into a 500.
-          // Returning `false` skips the CORS headers — the browser blocks
-          // naturally and we return 200/204 cleanly.
-          return callback(null, false);
-        });
-        return;
-      }
+    console.log("[CORS] Incoming Origin:", cleanOrigin || null);
 
-      console.warn(`[CORS] Blocked origin: ${origin}`);
-      return callback(null, false);
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-);
+    if (isAllowedOrigin(origin)) {
+      return callback(null, true);
+    }
 
-// Bust the cache as soon as a custom domain gets verified/removed.
-export const invalidateCorsCache = () => refreshCustomDomains();
+    if (Date.now() - lastCacheRefresh > 60_000) {
+      refreshCustomDomains().then(() => {
+        if (isAllowedOrigin(origin)) {
+          return callback(null, true);
+        }
 
+        console.warn("[CORS] Blocked origin:", cleanOrigin || null);
+        return callback(null, false);
+      });
+      return;
+    }
+
+    console.warn("[CORS] Blocked origin:", cleanOrigin || null);
+    return callback(null, false);
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
@@ -188,12 +191,15 @@ if (process.env.NODE_ENV === "production") {
   app.use("/api", limiter);
 }
 
+// Bust the cache as soon as a custom domain gets verified/removed.
+export const invalidateCorsCache = () => refreshCustomDomains();
+
 // ==========================================
 // HEALTH CHECK
 // ==========================================
 app.get("/", (req, res) => {
   res.json({
-    message: "🚀 Workflow API is running!",
+    message: "Workflow API is running!",
     status: "OK",
     timestamp: new Date().toISOString(),
   });
@@ -207,8 +213,17 @@ app.get("/api/health", (req, res) => {
   });
 });
 
+app.get("/api/cors-test", (req, res) => {
+  res.json({
+    success: true,
+    origin: req.headers.origin || null,
+    allowedOrigins,
+    frontendUrl: process.env.FRONTEND_URL || null,
+  });
+});
+
 // ==========================================
-// API ROUTES (we'll add these as we build)
+// API ROUTES
 // ==========================================
 app.use("/api/auth", authRoutes);
 app.use("/api/app-settings", appSettingsRoutes);
@@ -254,28 +269,25 @@ initSocket(httpServer);
 // ==========================================
 const PORT = process.env.PORT || 5000;
 
-// Boot order: DB first (so we know the data layer is good), THEN start listening.
-// If the DB fails, connectDB() exits the process — we never reach `listen()`.
 const startServer = async () => {
   await connectDB();
   httpServer.listen(PORT, () => {
     console.log("=".repeat(50));
-    console.log(`🚀 Server: ${process.env.NODE_ENV || "development"} mode`);
-    console.log(`📍 Local:    http://localhost:${PORT}`);
-    console.log(`💚 Health:   http://localhost:${PORT}/api/health`);
-    console.log(`🔌 Socket:   ws://localhost:${PORT}`);
+    console.log(`Server: ${process.env.NODE_ENV || "development"} mode`);
+    console.log(`Local:  http://localhost:${PORT}`);
+    console.log(`Health: http://localhost:${PORT}/api/health`);
+    console.log(`Socket: ws://localhost:${PORT}`);
     console.log("=".repeat(50));
-    // Tab-heartbeat-based auto-checkout
     startAutoCheckoutCron();
   });
 };
 
 startServer().catch((err) => {
-  console.error("❌ Failed to start server:", err.message);
+  console.error("Failed to start server:", err.message);
   process.exit(1);
 });
 
 process.on("unhandledRejection", (err) => {
-  console.error("❌ Unhandled Rejection:", err.message);
+  console.error("Unhandled Rejection:", err.message);
   httpServer.close(() => process.exit(1));
 });

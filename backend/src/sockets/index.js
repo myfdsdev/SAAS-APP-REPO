@@ -1,25 +1,28 @@
 import { Server } from 'socket.io';
 import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
+import {
+  isDirectlyAllowedOrigin,
+  normalizeOrigin,
+} from '../config/cors.js';
 
 let io;
 
 export const initSocket = (httpServer) => {
-  // Support multiple origins (same pattern as server.js CORS)
-  const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
-    .split(',')
-    .map((url) => url.trim());
-
   io = new Server(httpServer, {
     cors: {
       origin: (origin, callback) => {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.includes(origin)) return callback(null, true);
-        console.warn(`[Socket CORS] Blocked origin: ${origin}`);
+        const cleanOrigin = normalizeOrigin(origin || '');
+
+        if (!origin || isDirectlyAllowedOrigin(cleanOrigin)) {
+          return callback(null, true);
+        }
+
+        console.warn(`[Socket CORS] Blocked origin: ${cleanOrigin || null}`);
         return callback(new Error('Not allowed by CORS'));
       },
       credentials: true,
-      methods: ['GET', 'POST'],
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     },
     transports: ['websocket', 'polling'],
   });

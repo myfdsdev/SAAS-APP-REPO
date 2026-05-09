@@ -6,7 +6,8 @@ const appSettingsSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Company",
       default: null,
-      index: true,
+      // Index defined explicitly below (unique + partial filter) — don't add
+      // `index: true` here, it would create a duplicate.
     },
     app_name: {
       type: String,

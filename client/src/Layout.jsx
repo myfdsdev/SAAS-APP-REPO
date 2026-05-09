@@ -67,7 +67,6 @@ const adminNavItems = [
   { name: "Salary Management", page: "SalaryManagement", icon: DollarSign },
   { name: "Company Settings", page: "CompanySettings", icon: Settings },
   { name: "Domain Settings", page: "DomainSettings", icon: Globe },
-  { name: "Settings", page: "Settings", icon: Settings },
   { name: "My Dashboard", page: "Dashboard", icon: Users },
   { name: "Attendance History", page: "AttendanceHistory", icon: Clock },
   { name: "My Stats", page: "MyStats", icon: BarChart3 },
